@@ -3,7 +3,11 @@
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
-//#include <posix>
+
+int MAX_WORKERS = 10000;
+int MAX_PINS = 100000;
+
+int NUM_OF_THREADS = 3;
 
 char *fileInputName = "input.txt";
 char *fileOutputName = "output.txt";
@@ -29,8 +33,6 @@ int64_t timespec_difference(struct timespec a, struct timespec b) {
 // приложение должно выводить на экран информацию о том,
 // какая булавка находится у какого рабочего в данный момент времени
 
-
-
 // option = 1 -- command line console_input
 // option = 2 -- console console_input
 // option = 3 -- file console_input
@@ -41,9 +43,10 @@ int64_t timespec_difference(struct timespec a, struct timespec b) {
 // agrv[2] -- fileInputName
 // agrv[3] -- fileOutputName
 // agrv[4] -- workers
-// agrv[5] -- nails
+// agrv[5] -- pins
 
-//написать функцию ввода данных через консоль
+// input
+
 void console_input(int *workers, int *nails) {
     printf("Enter number of workers: ");
     scanf("%d", workers);
@@ -51,41 +54,77 @@ void console_input(int *workers, int *nails) {
     scanf("%d", nails);
 }
 
-//написать функцию ввода данных через файл
-void file_input(int *workers, int *nails, char *fileInputName) {
-    FILE *fileInput = fopen(fileInputName, "r");
-    if (fileInput == NULL) {
-        printf("Error opening file");
-        exit(1);
+int file_input(int *workers, int *nails, char *fileName) {
+    FILE *file;
+    if ((file = fopen(fileName, "r")) == NULL) {
+        printf("Unable to open file '%s'\n", fileName);
+        return 1;
     }
-    fscanf(fileInput, "%d", workers);
-    fscanf(fileInput, "%d", nails);
-    fclose(fileInput);
+    if (fscanf(file, "%d", workers) < 1) {
+        printf ("Reading file '%s' error\n", fileName);
+        fclose(file);
+        return 1;
+    }
+    if (fscanf(file, "%d", nails) < 1) {
+        printf("Reading file '%s' error\n", fileName);
+        fclose(file);
+        return 1;
+    }
+    if (*workers > MAX_WORKERS) {
+        printf("Number of workers is too big. Max number = %d\n", MAX_WORKERS);
+        fclose(file);
+        return 1;
+    }
+    if (*nails > MAX_PINS) {
+        printf("Number of pins is too big. Max number = %d\n", MAX_PINS);
+        fclose(file);
+        return 1;
+    }
+    fclose(file);
+    return 0;
 }
 
-//написать функцию генерации данных
 void random_generation(int *workers, int *nails) {
     srand(time(NULL));
-    *workers = rand() % 10 + 1;
-    *nails = rand() % 100 + 1;
+    *workers = rand() % MAX_WORKERS + 1;
+    *nails = rand() % MAX_PINS + 1;
 }
 
+// output
+
+void console_output(int result) {
+    printf("result: %d\n", result);
+}
+
+void file_output(double res, const char *result, char *filename) {
+    FILE *file;
+    if ((file = fopen(filename, "w")) != NULL) {
+        fprintf(file, result, res);
+        fclose(file);
+    }
+}
+
+// sequential process (in -> 1 -> 2 -> 3 -> out)
+
+// 1
 void* curvature_check(void *arg) {
     int *nail = (int *) arg;
     printf("Curvature check: %d\n", *nail);
     *nail += 1;
 }
-
+// 2
 void* sharpening(void *arg) {
     int *nail = (int *) arg;
     printf("Sharpening: %d\n", *nail);
-    *nail += 1;
+    *nail += 1;    
 }
-
-void* quality_control(void *arg) {
+// 3
+void* quality_control(void *arg, int* cnt) {
     int *nail = (int *) arg;
     printf("Quality control: %d\n", *nail);
     *nail += 1;
+    // one more was processed
+    *cnt += 1;
 }
 
 int main(int argc, char** argv) {
@@ -98,6 +137,7 @@ int main(int argc, char** argv) {
     int nails = 0;
 
     if (argc > 1) {
+        
         if (argc <= 2) {
             fileInput = fileInputName;
         } else {
@@ -117,7 +157,9 @@ int main(int argc, char** argv) {
         } else if (option == 2) {
             console_input(workers, nails);
         } else if (option == 3) {
-            file_input(workers, nails,fileInput);
+            if (file_input(workers, nails,fileInput)) {
+                return 1;
+            }
         } else {
             random_generation(workers, nails);
         }
@@ -126,10 +168,15 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    printf("Input value: %lf, eps: %lf\n", workers, nails);
+    printf("Input number of workers: %d, number of pins: %d\n", workers, nails);
+    
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    //
+    
+    int cnt = 0; // number of processed pins (nails)
 
     pthread_t thread_curvature_check, thread_sharpening, thread_quality_control;
-    int NUM_OF_THREADS = 3;
     pthread_t threads[] = {thread_curvature_check, thread_sharpening, thread_quality_control};
 
     //pthread_create(&thread_curvature_check, NULL, curvature_check, NULL);
@@ -142,17 +189,15 @@ int main(int argc, char** argv) {
         //pthread_mutex_unlock(&mutex);
         pthread_create(&threads[i], NULL, curvature_check, NULL);
     }
-
-    clock_gettime(CLOCK_MONOTONIC, &start);
-
+    
     //
 
     clock_gettime(CLOCK_MONOTONIC, &end);
     elapsed_ns = timespec_difference(end, start);
     printf("Elapsed: %ld ns\n", elapsed_ns);
     
-    //console_output(result, fileOutput);
-    //file_output(result, fileOutput);
+    console_output(result, fileOutput);
+    file_output(result, fileOutput);
 
     return 0;
 }

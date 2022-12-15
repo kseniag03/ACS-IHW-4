@@ -53,22 +53,107 @@ out = (out + 1) % BUFFER_SIZE;
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <pthread.h>
+#include <pthread.h> // Библиотека POSIX Threads
+
+#include <semaphore.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+
+const int MAX_WORKERS = 10000;
+const int MAX_PINS = 100000;
+
+const int NUM_OF_THREADS = 3;
+
+const char *fileInputName = "input.txt";
+const char *fileOutputName = "output.txt";
+
+
+
+const int bufSize = 10;
+int buf[bufSize] ; //буфер
+int front = 0 ;    //индекс для чтения из буфера
+int rear = 0 ;     //индекс для записи в буфер
+
+
 
 typedef struct {
-    bool isCurve; // if true -> won't take
-    int quantityLevel; // after sharpering increases
-} pin;
+    int isCurve; // if 1 -> won't take
+    int quantityLevel; // after sharpening increases
+} Pin;
 
-int MAX_WORKERS = 10000;
-int MAX_PINS = 100000;
+Pin pinBuffer[MAX_PINS];
 
-int NUM_OF_THREADS = 3;
+int in = 0;
+int out = 0;
 
-char *fileInputName = "input.txt";
-char *fileOutputName = "output.txt";
+void *producer(void *arg) {
+    Pin nextProduced; // следующий генерируемый элемент
+
+    while (1) {
+        while (((in + 1) % MAX_PINS) == out) {
+
+        }
+        pinBuffer[in] = nextProduced;
+        in = (in + 1) % MAX_PINS;
+    }
+}
+
+void *consumer(void *arg) {
+    Pin nextConsumed; // следующий используемый элемент
+
+    while (1) {
+        while (in == out) {
+
+        }
+        nextConsumed = pinBuffer[out];
+        out = (out + 1) % MAX_PINS;
+    }
+}
+
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+
+sem_t  empty ; //семафор, отображающий как  буфер пуст
+sem_t  full ;  //семафор, отображающий как буфер полон
+pthread_mutex_t mutexD ; //мьютекс для операции записи
+pthread_mutex_t mutexF ; //мьютекс для операции чтения
+unsigned int seed = 101; // инициализатор ГСЧ
+
+//стартовая функция потоков – производителей (писателей)
+void *Producer(void *param) {
+    int pNum = *((int*)param);
+    while (1) {
+        //создать элемент для буфера
+        int data = rand() % 11 - 5 ;
+//поместить элемент в буфер
+        pthread_mutex_lock(&mutexD) ; //защита операции записи
+        sem_wait(&empty) ; // свободных ячеек уменьшить на 1
+        buf[rear] = data ;
+        rear = (rear+1)%bufSize ; //критическая секция
+        sem_post(&full) ; //занятых ячеек увеличилось на 1
+        pthread_mutex_unlock(&mutexD) ;
+        printf("Producer %d: Writes value = %d to cell [%d]\n", sleep(2));
+    }
+    return null;
+}
+
+//стартовая функция потоков – потребителей (читателей)
+void *Consumer(void *param) {
+    int cNum = *((int*)param);
+    int result ;
+    while (1) {
+//извлечь элемент из буфера pthread_mutex_lock(&mutexF) ; //защита чтения //количество занятых ячеек уменьшить на единицу sem_wait(&full) ;
+        result = buf[front] ;
+        front = (front+1)%bufSize ; //критическая секция //количество свободных ячеек увеличилось на 1 sem_post(&empty) ;
+        pthread_mutex_unlock(&mutexF) ;
+//обработать полученный элемент
+        Printf("Consumer %d: Reads value = %d from cell [%d]\n", cNum, result, front) ;
+               , sleep(5));
+    }return nullptr; }
+
+
 
 int64_t timespec_difference(struct timespec a, struct timespec b) {
     int64_t timeA, timeB;
@@ -103,14 +188,14 @@ int64_t timespec_difference(struct timespec a, struct timespec b) {
 
 // input
 
-void console_input(int *workers, int *nails) {
+void console_input(int *workers, int *pins) {
     printf("Enter number of workers: ");
     scanf("%d", workers);
-    printf("Enter number of nails: ");
-    scanf("%d", nails);
+    printf("Enter number of pins: ");
+    scanf("%d", pins);
 }
 
-int file_input(int *workers, int *nails, char *fileName) {
+int file_input(int *workers, int *pins, const char *fileName) {
     FILE *file;
     if ((file = fopen(fileName, "r")) == NULL) {
         printf("Unable to open file '%s'\n", fileName);
@@ -121,7 +206,7 @@ int file_input(int *workers, int *nails, char *fileName) {
         fclose(file);
         return 1;
     }
-    if (fscanf(file, "%d", nails) < 1) {
+    if (fscanf(file, "%d", pins) < 1) {
         printf("Reading file '%s' error\n", fileName);
         fclose(file);
         return 1;
@@ -131,7 +216,7 @@ int file_input(int *workers, int *nails, char *fileName) {
         fclose(file);
         return 1;
     }
-    if (*nails > MAX_PINS) {
+    if (*pins > MAX_PINS) {
         printf("Number of pins is too big. Max number = %d\n", MAX_PINS);
         fclose(file);
         return 1;
@@ -140,19 +225,19 @@ int file_input(int *workers, int *nails, char *fileName) {
     return 0;
 }
 
-void random_generation(int *workers, int *nails) {
+void random_generation(int *workers, int *pins) {
     srand(time(NULL));
     *workers = rand() % MAX_WORKERS + 1;
-    *nails = rand() % MAX_PINS + 1;
+    *pins = rand() % MAX_PINS + 1;
 }
 
 // output
 
-void console_output(int result) {
-    printf("result: %d\n", result);
+void console_output(int cnt, const char *result) {
+    printf(result, cnt);
 }
 
-void file_output(double res, const char *result, char *filename) {
+void file_output(double res, const char *result, const char *filename) {
     FILE *file;
     if ((file = fopen(filename, "w")) != NULL) {
         fprintf(file, result, res);
@@ -164,8 +249,8 @@ void file_output(double res, const char *result, char *filename) {
 
 // 1
 void* curvature_check(void *arg) {
-    pin curPin = (pin) arg;
-    if (pin.isCurve) {
+    Pin *curPin = (Pin *) arg;
+    if (curPin->isCurve) {
         return; // next
     }
     
@@ -193,13 +278,12 @@ void* quality_control(void *arg, int* cnt) {
 }
 
 int main(int argc, char** argv) {
-    char *arg;
     int option;
     struct timespec start, end;
     int64_t elapsed_ns;
-    char *fileInput, *fileOutput;
+    const char *fileInput, *fileOutput;
     int workers = 0;
-    int nails = 0;
+    int pins = 0;
 
     if (argc > 1) {
         
@@ -218,28 +302,28 @@ int main(int argc, char** argv) {
 
         if (option == 1) {
             workers = atoi(argv[4]);
-            nails = atoi(argv[5]);
+            pins = atoi(argv[5]);
         } else if (option == 2) {
-            console_input(workers, nails);
+            console_input(&workers, &pins);
         } else if (option == 3) {
-            if (file_input(workers, nails,fileInput)) {
+            if (file_input(&workers, &pins, fileInput)) {
                 return 1;
             }
         } else {
-            random_generation(workers, nails);
+            random_generation(&workers, &pins);
         }
     } else {
         printf("No arguments\n");
         return 0;
     }
 
-    printf("Input number of workers: %d, number of pins: %d\n", workers, nails);
+    printf("Input number of workers: %d, number of pins: %d\n", workers, pins);
     
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     //
     
-    int cnt = 0; // number of processed pins (nails)
+    int cnt = 0; // number of processed pins (pins)
 
     pthread_t thread_curvature_check, thread_sharpening, thread_quality_control;
     pthread_t threads[] = {thread_curvature_check, thread_sharpening, thread_quality_control};
@@ -253,16 +337,18 @@ int main(int argc, char** argv) {
         //printf("Nail %d is in curvature check\n", i);
         //pthread_mutex_unlock(&mutex);
         pthread_create(&threads[i], NULL, curvature_check, NULL);
+        pthread_create(&threads[i], NULL, sharpening, NULL);
+       // pthread_create(&threads[i], NULL, quality_control, NULL);
     }
     
     //
 
     clock_gettime(CLOCK_MONOTONIC, &end);
     elapsed_ns = timespec_difference(end, start);
-    printf("Elapsed: %ld ns\n", elapsed_ns);
+    printf("Elapsed: %lld ns\n", elapsed_ns);
     
-    console_output(result, fileOutput);
-    file_output(result, fileOutput);
+    console_output(cnt, "The final number of processed pins: %d \n");
+    file_output(cnt, "The final number of processed pins: %d \n", fileOutput);
 
     return 0;
 }

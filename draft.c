@@ -1,8 +1,64 @@
+// http://samzan.net/174085?ysclid=lbovbvu6cb13766593
+
+/*
+Реализация представления буфера на языке Си может иметь вид:
+#define BUFFER_SIZE 1000
+
+typedef struct {
+
+. . .
+
+} item;
+
+item buffer[BUFFER_SIZE];
+
+int in = 0;
+
+int out = 0;
+
+
+Реализация схемы алгоритма процесса-производителя имеет вид:
+item nextProduced; // следующий генерируемый элемент
+
+ while (1) { // бесконечный цикл
+
+while (((in + 1) % BUFFER_SIZE) == out)
+
+ ; // ждать, пока буфер переполнен
+
+buffer[in] = nextProduced; // генерация элемента
+
+in = (in + 1) % BUFFER_SIZE;
+
+}
+
+Соответственно, реализация процесса-потребителя будет иметь вид:
+item nextConsumed; // следующий используемый элемент
+
+while (1) { // бесконечный цикл
+
+while (in == out)
+
+ ; // ждать, пока буфер пуст
+
+nextConsumed = buffer[out]; // использование элемента
+
+out = (out + 1) % BUFFER_SIZE;
+
+}
+
+*/
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
+
+typedef struct {
+    bool isCurve; // if true -> won't take
+    int quantityLevel; // after sharpering increases
+} pin;
 
 int MAX_WORKERS = 10000;
 int MAX_PINS = 100000;
@@ -108,16 +164,25 @@ void file_output(double res, const char *result, char *filename) {
 
 // 1
 void* curvature_check(void *arg) {
+    pin curPin = (pin) arg;
+    if (pin.isCurve) {
+        return; // next
+    }
+    
+    // give right to next worker
+    
     int *nail = (int *) arg;
     printf("Curvature check: %d\n", *nail);
     *nail += 1;
 }
+
 // 2
 void* sharpening(void *arg) {
     int *nail = (int *) arg;
     printf("Sharpening: %d\n", *nail);
     *nail += 1;    
 }
+
 // 3
 void* quality_control(void *arg, int* cnt) {
     int *nail = (int *) arg;

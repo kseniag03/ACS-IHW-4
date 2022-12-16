@@ -1,54 +1,5 @@
 // http://samzan.net/174085?ysclid=lbovbvu6cb13766593
 
-/*
-Реализация представления буфера на языке Си может иметь вид:
-#define BUFFER_SIZE 1000
-
-typedef struct {
-
-. . .
-
-} item;
-
-item buffer[BUFFER_SIZE];
-
-int in = 0;
-
-int out = 0;
-
-
-Реализация схемы алгоритма процесса-производителя имеет вид:
-item nextProduced; // следующий генерируемый элемент
-
- while (1) { // бесконечный цикл
-
-while (((in + 1) % BUFFER_SIZE) == out)
-
- ; // ждать, пока буфер переполнен
-
-buffer[in] = nextProduced; // генерация элемента
-
-in = (in + 1) % BUFFER_SIZE;
-
-}
-
-Соответственно, реализация процесса-потребителя будет иметь вид:
-item nextConsumed; // следующий используемый элемент
-
-while (1) { // бесконечный цикл
-
-while (in == out)
-
- ; // ждать, пока буфер пуст
-
-nextConsumed = buffer[out]; // использование элемента
-
-out = (out + 1) % BUFFER_SIZE;
-
-}
-
-*/
-
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,64 +7,30 @@ out = (out + 1) % BUFFER_SIZE;
 #include <pthread.h> // Библиотека POSIX Threads
 
 #include <semaphore.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <unistd.h>
 
-const int MAX_WORKERS = 10000;
-const int MAX_PINS = 100000;
+const int MAX_WORKERS = 5;//10000;
+const int MAX_PINS = 10;//100000;
 
 const int NUM_OF_THREADS = 3;
 
 const char *fileInputName = "input.txt";
 const char *fileOutputName = "output.txt";
 
-
-
-const int bufSize = 10;
-int buf[bufSize] ; //буфер
-int front = 0 ;    //индекс для чтения из буфера
-int rear = 0 ;     //индекс для записи в буфер
-
-
+int front = 0 ;    // индекс для чтения из буфера
+int rear = 0 ;     // индекс для записи в буфер
+int count = 0 ; //количество занятых ячеек буфера
 
 typedef struct {
     int isCurve; // if 1 -> won't take
     int quantityLevel; // after sharpening increases
 } Pin;
 
-Pin pinBuffer[MAX_PINS];
+Pin pinBuffer[100000];
 
-int in = 0;
-int out = 0;
-
-void *producer(void *arg) {
-    Pin nextProduced; // следующий генерируемый элемент
-
-    while (1) {
-        while (((in + 1) % MAX_PINS) == out) {
-
-        }
-        pinBuffer[in] = nextProduced;
-        in = (in + 1) % MAX_PINS;
-    }
-}
-
-void *consumer(void *arg) {
-    Pin nextConsumed; // следующий используемый элемент
-
-    while (1) {
-        while (in == out) {
-
-        }
-        nextConsumed = pinBuffer[out];
-        out = (out + 1) % MAX_PINS;
-    }
-}
-
-
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-
+int shouldContinue = 0; // flag if pin is straight and we can continue
+int improvement = 0; // flag for improving: if > 0 -> improve
+int processedPins = 0; // number of processed pins (pins)
 
 sem_t  empty ; //семафор, отображающий как  буфер пуст
 sem_t  full ;  //семафор, отображающий как буфер полон
@@ -121,50 +38,226 @@ pthread_mutex_t mutexD ; //мьютекс для операции записи
 pthread_mutex_t mutexF ; //мьютекс для операции чтения
 unsigned int seed = 101; // инициализатор ГСЧ
 
-//стартовая функция потоков – производителей (писателей)
+pthread_mutex_t mutex; // мьютекс для условных переменных
+// поток-писатель блокируется этой условной переменной,
+// когда количество занятых ячеек становится = bufSize
+pthread_cond_t not_full ;
+// поток-читатель блокируется этой условной переменной,
+// когда количество занятых ячеек становится равно 0
+pthread_cond_t not_empty ;
+
+
+// sequential process (in -> 1 -> 2 -> 3 -> out)
+
+// 1
+int curvature_check(Pin pin) {
+    printf("Curvature check: ");
+    if (!pin.isCurve) {
+        printf("Pin is straight\n");
+        return 1;
+    }
+    printf("Pin is curved\n");
+    return 0;
+}
+
+// 2
+int sharpening(Pin *pin) {
+    printf("Sharpening: ");
+    srand(time(NULL));
+    int improve = rand() % 100 + 1;
+    pin->quantityLevel += improve;
+    printf("Pin is sharpened by %d\n", improve);
+    return improve;
+}
+
+// 3
+void quality_control(Pin pin) {
+    printf("Quality control: ");
+    if (pin.quantityLevel > 50) {
+        printf("Pin is good\n");
+        ++processedPins;
+    } else {
+        printf("Pin is bad\n");
+    }
+}
+
+//стартовая функция потоков – производителей (писателей) -- генерация булавок и запись их в буфер (входной параметр -- число генерируемых булавок)
 void *Producer(void *param) {
     int pNum = *((int*)param);
-    while (1) {
-        //создать элемент для буфера
-        int data = rand() % 11 - 5 ;
-//поместить элемент в буфер
-        pthread_mutex_lock(&mutexD) ; //защита операции записи
-        sem_wait(&empty) ; // свободных ячеек уменьшить на 1
-        buf[rear] = data ;
-        rear = (rear+1)%bufSize ; //критическая секция
-        sem_post(&full) ; //занятых ячеек увеличилось на 1
-        pthread_mutex_unlock(&mutexD) ;
-        printf("Producer %d: Writes value = %d to cell [%d]\n", sleep(2));
+    int i = pNum;
+    while (i--) {
+        //создать булавку -- элемент для буфера
+        srand(time(NULL));
+        int isCurve = rand() % 2;
+        int quantityLevel = rand() % 100 + 10;
+        Pin nextProduced = { isCurve, quantityLevel };
+
+        //поместить элемент в буфер
+
+        pthread_mutex_lock(&mutex) ; //защита записи
+
+        //заснуть, если количество занятых ячеек равно размеру буфера
+        while (count == MAX_PINS ) {
+            pthread_cond_wait(&not_full, &mutex);
+        }
+
+        //запись в общий буфер
+        pinBuffer[rear] = nextProduced;
+        rear = (rear + 1) % MAX_PINS;
+        count++ ; //появилась занятая ячейка
+
+        //конец критической секции
+        pthread_mutex_unlock(&mutex) ;
+
+        //разбудить читателей после добавления в буфер
+        pthread_cond_broadcast(&not_empty) ;
+
+        printf("Generated pin with quantity level = %d to cell [%d]\n", nextProduced.quantityLevel, rear);
+
+        sleep(2);
     }
-    return null;
+    return NULL;
 }
 
-//стартовая функция потоков – потребителей (читателей)
-void *Consumer(void *param) {
+// стартовая функция потоков – потребителей (читателей), проверка булавок на кривизну
+void *Consumer_curvature_check(void *param) {
     int cNum = *((int*)param);
-    int result ;
+    Pin result;
+
+    printf("param consumer curve %d\n", cNum);
+
     while (1) {
-//извлечь элемент из буфера pthread_mutex_lock(&mutexF) ; //защита чтения //количество занятых ячеек уменьшить на единицу sem_wait(&full) ;
-        result = buf[front] ;
-        front = (front+1)%bufSize ; //критическая секция //количество свободных ячеек увеличилось на 1 sem_post(&empty) ;
-        pthread_mutex_unlock(&mutexF) ;
-//обработать полученный элемент
-        Printf("Consumer %d: Reads value = %d from cell [%d]\n", cNum, result, front) ;
-               , sleep(5));
-    }return nullptr; }
+        printf("Consumer %d is waiting for pin\n", cNum);
 
+        //извлечь элемент из буфера
+        pthread_mutex_lock(&mutex); //защита чтения
 
+        //заснуть, если количество занятых ячеек равно нулю
+        while (count == 0) {
+            pthread_cond_wait(&not_empty, &mutex);
+        }
 
-int64_t timespec_difference(struct timespec a, struct timespec b) {
-    int64_t timeA, timeB;
-    timeA = a.tv_sec;
-    timeA *= 1000000000;
-    timeA += a.tv_nsec;
-    timeB = b.tv_sec;
-    timeB *= 1000000000;
-    timeB += b.tv_nsec;
-    return timeA - timeB;
+        //изъятие из буфера – начало критической секции
+        result = pinBuffer[front];
+        count-- ; //занятая ячейка стала свободной
+
+        //обработать полученный элемент
+        printf("Consumer %d: Reads pin with quantity level = %d from cell [%d]\t", cNum, result.quantityLevel, front);
+        printf("pin is %s\n", ((!result.isCurve) ? "straight" : "curved"));
+
+        shouldContinue = curvature_check(result);
+        if (shouldContinue) {
+            count++ ; //появилась занятая ячейка (возвращаем булавку в буфер, чтобы она не потерялась и другие рабочие могли ее обработать)
+        } else {
+            front = (front + 1) % MAX_PINS; //критическая секция (двигаемся к следующей булавке, если текущая оказалась кривой)
+        }
+
+        // конец критической секции
+        pthread_mutex_unlock(&mutex) ;
+
+        // разбудить потоки-писатели
+
+        // после получения элемента из буфера
+        pthread_cond_broadcast(&not_full) ;
+
+        sleep(5);
+    }
 }
+
+//стартовая функция потоков – потребителей (читателей), шлифовка булавок
+void *Consumer_sharpening(void *param) {
+    int cNum = *((int*)param);
+    Pin result;
+
+    printf("param consumer sharp %d\n", cNum);
+
+    while (1) {
+        printf("Consumer %d is waiting for pin...\n", cNum);
+
+        //извлечь элемент из буфера
+        pthread_mutex_lock(&mutex); //защита чтения
+
+        //заснуть, если количество занятых ячеек = нулю
+        while (count == 0) {
+            pthread_cond_wait(&not_empty, &mutex);
+        }
+
+        //изъятие из буфера – начало критической секции
+        result = pinBuffer[front];
+        count-- ; //занятая ячейка стала свободной
+
+        //обработать полученный элемент
+        printf("Consumer %d: Reads pin with quantity level = %d from cell [%d]\n", cNum, result.quantityLevel, front);
+
+
+        if (shouldContinue) {
+            improvement = sharpening(&pinBuffer[front]);
+            count++;
+        } else {
+            front = (front + 1) % MAX_PINS; //критическая секция
+        }
+
+        // конец критической секции
+        pthread_mutex_unlock(&mutex) ;
+
+        // разбудить потоки-писатели
+
+        // после получения элемента из буфера
+        pthread_cond_broadcast(&not_full) ;
+
+        sleep(5);
+    }
+}
+
+//стартовая функция потоков – потребителей (читателей), проверка качества булавок
+void *Consumer_quality_control(void *param) {
+    int cNum = *((int*)param);
+    Pin result;
+
+    printf("param consumer quality %d\n", cNum);
+
+    while (1) {
+        printf("Consumer %d is waiting for pin...\n", cNum);
+
+        //извлечь элемент из буфера
+        pthread_mutex_lock(&mutex); //защита чтения
+
+        //заснуть, если количество занятых ячеек = нулю
+        while (count == 0) {
+            pthread_cond_wait(&not_empty, &mutex);
+        }
+
+        //изъятие из буфера – начало критической секции
+        result = pinBuffer[front];
+
+        count-- ; //занятая ячейка стала свободной
+
+        //обработать полученный элемент
+        printf("Consumer %d: Reads pin with quantity level = %d from cell [%d]\n", cNum, result.quantityLevel, front);
+
+
+        if (shouldContinue && improvement > 0) {
+            //result.quantityLevel += improve;
+            quality_control(pinBuffer[front]);
+        }
+
+        shouldContinue = 0;
+        improvement = 0;
+
+        front = (front + 1) % MAX_PINS; //критическая секция
+
+        // конец критической секции
+        pthread_mutex_unlock(&mutex) ;
+
+        // разбудить потоки-писатели
+
+        // после получения элемента из буфера
+        pthread_cond_broadcast(&not_full) ;
+
+        sleep(5);
+    }
+}
+
 
 // написать многопоточное приложение, моделирующее работу цеха с передачей булавок тремя рабочими
 // для трёх разных процессов (проверка кривизны, заточка, контроль качества)
@@ -245,36 +338,17 @@ void file_output(double res, const char *result, const char *filename) {
     }
 }
 
-// sequential process (in -> 1 -> 2 -> 3 -> out)
+// time counter
 
-// 1
-void* curvature_check(void *arg) {
-    Pin *curPin = (Pin *) arg;
-    if (curPin->isCurve) {
-        return; // next
-    }
-    
-    // give right to next worker
-    
-    int *nail = (int *) arg;
-    printf("Curvature check: %d\n", *nail);
-    *nail += 1;
-}
-
-// 2
-void* sharpening(void *arg) {
-    int *nail = (int *) arg;
-    printf("Sharpening: %d\n", *nail);
-    *nail += 1;    
-}
-
-// 3
-void* quality_control(void *arg, int* cnt) {
-    int *nail = (int *) arg;
-    printf("Quality control: %d\n", *nail);
-    *nail += 1;
-    // one more was processed
-    *cnt += 1;
+int64_t timespec_difference(struct timespec a, struct timespec b) {
+    int64_t timeA, timeB;
+    timeA = a.tv_sec;
+    timeA *= 1000000000;
+    timeA += a.tv_nsec;
+    timeB = b.tv_sec;
+    timeB *= 1000000000;
+    timeB += b.tv_nsec;
+    return timeA - timeB;
 }
 
 int main(int argc, char** argv) {
@@ -286,7 +360,7 @@ int main(int argc, char** argv) {
     int pins = 0;
 
     if (argc > 1) {
-        
+
         if (argc <= 2) {
             fileInput = fileInputName;
         } else {
@@ -317,38 +391,50 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    printf("Input number of workers: %d, number of pins: %d\n", workers, pins);
-    
+    printf("Input number of workers: %d, number of pins: %d\n\n", workers, pins);
+
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     //
-    
-    int cnt = 0; // number of processed pins (pins)
 
-    pthread_t thread_curvature_check, thread_sharpening, thread_quality_control;
-    pthread_t threads[] = {thread_curvature_check, thread_sharpening, thread_quality_control};
+    srand(seed);
+    int i ;
+    //инициализация мьютексов и семафоров
+    pthread_mutex_init(&mutex, NULL) ;
+    pthread_cond_init(&not_full, NULL) ;
+    pthread_cond_init(&not_empty, NULL) ;
 
-    //pthread_create(&thread_curvature_check, NULL, curvature_check, NULL);
-
-    pthread_mutex_init(&mutex, NULL);
-
-    for (int i = 0; i < NUM_OF_THREADS; i++) {
-        //pthread_mutex_lock(&mutex);
-        //printf("Nail %d is in curvature check\n", i);
-        //pthread_mutex_unlock(&mutex);
-        pthread_create(&threads[i], NULL, curvature_check, NULL);
-        pthread_create(&threads[i], NULL, sharpening, NULL);
-       // pthread_create(&threads[i], NULL, quality_control, NULL);
+    //запуск потребителей
+    pthread_t threadC[workers];
+    int consumers[workers];
+    for (i = 0 ; i < workers ; i++) {
+        consumers[i] = i + 1;
+        if ((i + 1) % NUM_OF_THREADS == 1) { // curve: 1 4 7 10
+            pthread_create(&threadC[i],NULL,Consumer_curvature_check,(void*)(consumers + i));
+        } else if ((i + 1) % NUM_OF_THREADS == 2) { // sharp: 2 5 8 11
+            pthread_create(&threadC[i],NULL,Consumer_sharpening,(void*)(consumers + i));
+        } else { // quality: 3 6 9 12
+            pthread_create(&threadC[i],NULL,Consumer_quality_control,(void*)(consumers + i));
+        }
     }
-    
-    //
+
+    // пусть главный поток будет потоком производителя -- генерация булавок
+    Producer((void*)&pins);
+
+    //инициализация мьютексов и семафоров
+    pthread_mutex_init(&mutexD, NULL);
+    pthread_mutex_init(&mutexF, NULL) ;
+    //количество свободных ячеек равно bufSize
+    sem_init(&empty, 0, MAX_PINS) ;
+    //количество занятых ячеек равно 0
+    sem_init(&full, 0, 0) ;
 
     clock_gettime(CLOCK_MONOTONIC, &end);
     elapsed_ns = timespec_difference(end, start);
-    printf("Elapsed: %lld ns\n", elapsed_ns);
-    
-    console_output(cnt, "The final number of processed pins: %d \n");
-    file_output(cnt, "The final number of processed pins: %d \n", fileOutput);
+    printf("\nElapsed: %lld ns\n", elapsed_ns);
+
+    console_output(processedPins, "The final number of processed pins: %d \n");
+    file_output(processedPins, "The final number of processed pins: %d \n", fileOutput);
 
     return 0;
 }
